@@ -18,5 +18,8 @@
   "bugs": {
     "url": "https://github.com/Znarfen/BokningPlattform/issues"
   },
-  "homepage": "https://github.com/Znarfen/BokningPlattform#readme"
+  "homepage": "https://github.com/Znarfen/BokningPlattform#readme",
+  "dependencies": {
+    "socket.io": "^4.8.3"
+  }
 }

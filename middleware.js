@@ -8,7 +8,7 @@ const JWT_SECRET = "super_secret_key";
 const roles = {
     admin: ["create", "remove", "update", "read"],
     moderator: ["update", "read"],
-    user: ["read"]
+    user: []
 }
 
 export default function (app) {
@@ -54,5 +54,16 @@ export function authorizeRole(permission) {
         }
 
         next();
+    }
+}
+
+export function checkRole(role) {
+    return (req) => {
+        const rolePermissions = roles[req.user.role] || [];
+
+        if (rolePermissions.includes(role)) {
+            return true;
+        }
+        return false;
     }
 }

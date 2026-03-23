@@ -3,17 +3,22 @@ import bcrypt from "bcrypt";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
+import http from "http";
+import { Server } from "socket.io";
 
 import User from "./models/User.js";
 import Room from "./models/Room.js";
 import Booking from "./models/Booking.js";
-import middleware, { authorizeRole, authentication } from "./middleware.js";
+import middleware, { authorizeRole, authentication, checkRole } from "./middleware.js";
 
 const { ObjectId } = mongoose.Types;
 
 const PORT = process.env.PORT || 3000;
 const app = express();
 const JWT_SECRET = "super_secret_key";
+
+const server = http.createServer(app);
+const io = new Server(server);
 
 middleware(app);
 
@@ -97,7 +102,7 @@ app.post('/addroom', authentication, authorizeRole(["create"]), async (req, res)
 		await newRoom.save();
 
 		console.log("Room created: '" + name + "' with capacity: '" + capacity + "' and type: '" + type + "'");
-		res.status(201).json({ message: "Room created successfully:" + newRoom});
+		res.status(201).json({ message: "Room created successfully!", room: newRoom, id: newRoom._id });
 
 	} catch (error) {
 		console.error("rooms error: " + error);
@@ -117,25 +122,27 @@ app.get('/rooms', authentication, authorizeRole(["read"]), async (req, res) => {
 });
 
 // Update room route
-app.put('/updateroom/:name', authentication, authorizeRole(["update"]), async (req, res) => {
+app.put('/updateroom/:id', authentication, authorizeRole(["update"]), async (req, res) => {
 	try {
-		const { currentName } = req.params;
+		const { id } = req.params;
 		const { capacity, type, name } = req.body;
 
-		const room = await Room.findOne({ currentName });
+		const room = await Room.findOne({ _id: id });
 		if (!room) return res.status(404).json({ message: "Room not found!" });
+		const oldName = room.name;
 
-		const existingRoom = await Room.findOne({ name });
-		if (existingRoom) return res.status(400).json({ message: "Another room with this name already exists!" });
+		if (name !== room.name) {
+			const existingRoom = await Room.findOne({ name });
+			if (existingRoom) return res.status(400).json({ message: "Another room with this name already exists!" });
+		}
 
 		if (capacity) room.capacity = capacity;
 		if (type) room.type = type;
 		if (name) room.name = name;
 		await room.save();
-		await existingRoom.deleteOne();
 
 		res.json({ message: "Room updated successfully!" });
-		console.log("Room updated: '" + currentName + "' new values - name: '" + room.name + "', capacity: '" + room.capacity + "', type: '" + room.type + "'");
+		console.log("Room updated: '" + oldName + "' new values - name: '" + room.name + "', capacity: '" + room.capacity + "', type: '" + room.type + "'");
 	} catch (error) {
 		console.error("update room error: " + error);
 		res.status(500).json({ message: "Server error" });
@@ -143,17 +150,17 @@ app.put('/updateroom/:name', authentication, authorizeRole(["update"]), async (r
 });
 
 // Delete room route
-app.delete('/killroom/:name', authentication, authorizeRole(["remove"]), async (req, res) => {
+app.delete('/killroom/:id', authentication, authorizeRole(["remove"]), async (req, res) => {
 	try {
-		const { name } = req.params;
+		const { id } = req.params;
 
-		const room = await Room.findOne({ name });
+		const room = await Room.findOne({ _id: id });
 		if (!room) return res.status(404).json({ message: "Room not found!" });
 
 		await room.deleteOne();
 
 		res.json({ message: "Room deleted successfully!" });
-		console.log("Room deleted: '" + name + "'");
+		console.log("Room deleted: '" + room.name + "'");
 
 	} catch (error) {
 		console.error("delete room error: " + error);
@@ -162,17 +169,12 @@ app.delete('/killroom/:name', authentication, authorizeRole(["remove"]), async (
 });
 
 // Booking rooms route
-app.post('/booking', async (req, res) => {
+app.post('/booking', authentication, async (req, res) => {
 	try {
 		const {roomId, startTime, endTime } = req.body;
 
 		const userId = req.user?.userId;
 		if (!userId) return res.status(401).json({ message: "User not authenticated!" });
-
-		// Validate roomId is a valid ObjectId
-		if (!ObjectId.isValid(roomId)) {
-			return res.status(400).json({ message: "Invalid room ID format" });
-		}
 
 		// Validate and sanitize date inputs
 		const startDate = new Date(startTime);
@@ -190,19 +192,114 @@ app.post('/booking', async (req, res) => {
 
 		// Check for overlapping bookings
 		const overlappingBooking = await Booking.findOne({
-			roomId: new ObjectId(roomId),
+			roomId: room._id,
 			startTime: { $lt: endDate },
 			endTime: { $gt: startDate }
 		});
-		if (overlappingBooking) return res.status(400).json({ message: "Room is already booked for the selected time period!" });
+		if (overlappingBooking) return res.status(400).json({ message: "Room is unavailable for the selected time period." });
 
-		await new Booking({ roomId: new ObjectId(roomId), userId: new ObjectId(userId), startTime: startDate, endTime: endDate }).save();
+		const newBooking = new Booking({ roomId: new ObjectId(roomId), userId: new ObjectId(userId), startTime: startDate, endTime: endDate });
+		await newBooking.save();
 
-		res.json({ message: "Room booked successfully!" });
+		res.json({ message: "Room booked successfully!", id: newBooking._id });
+		console.log("Room booked: '" + room.name + "' by user: '" + user.username + "' from: '"
+			+ startDate.toISOString() + "' to: '" + endDate.toISOString() + "'", "Booking ID: '" + newBooking._id + "'");
 
 	}
 	catch (err) {
 		console.error("book error: " + err);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+// Show all bookings that the user has made
+app.get('/bookings', authentication, async (req, res) => {
+	try {
+		const userId = req.user?.userId;
+		if (!userId) return res.status(401).json({ message: "User not authenticated!" });
+
+		let bookings = await Booking.find();
+
+		if(!checkRole("read")(req)){
+			let newBooking = [];
+			bookings.forEach(booking => {
+				if (booking.userId == userId) newBooking.push(booking);
+			});
+			bookings = newBooking;
+		}
+
+		res.json(bookings.map(booking => ({
+			id: booking._id,
+			room: booking.roomId,
+			user: booking.userId,
+			startTime: booking.startTime,
+			endTime: booking.endTime
+		})));
+		console.log("Bookings retrieved for user an user with role: '" + req.user.role + "'");
+	} catch (error) {
+		console.error("get bookings error: " + error);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+// Update an booking
+app.put('/updatebooking/:id', authentication, async (req, res) => {
+	try {
+		const { id } = req.params;
+		const { startTime, endTime } = req.body;
+
+		const booking = await Booking.findById(id);
+		if (!booking) return res.status(404).json({ message: "Booking not found!" });
+
+		// Check if the user has permission to update the booking
+        const isOwner = booking.userId == req.user.id;
+        const isAdmin = checkRole("remove")(req);
+        if (!(isAdmin || isOwner)) return res.status(403).json({ message: "Forbidden: You don't have the required permissions!" });
+
+		const startDate = new Date(startTime);
+		const endDate = new Date(endTime);
+
+		// Check for overlapping bookings
+		const overlappingBooking = await Booking.findOne({
+			_id: { $ne: new ObjectId(id) },
+			roomId: booking.roomId,
+			startTime: { $lt: endDate },
+			endTime: { $gt: startDate }
+		});
+		if (overlappingBooking) return res.status(400).json({ message: "Room is unavailable for the selected time period." });
+
+		booking.startTime = startDate;
+		booking.endTime = endDate;
+		await booking.save();
+
+		res.json({ message: "Booking updated successfully!" });
+		console.log("Booking updated: '" + booking._id + "' new values - startTime: '" + startDate + "', endTime: '" + endDate + "'");
+
+	} catch (error) {
+		console.error("update booking error: " + error);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+// Delete a booking
+app.delete('/deletebooking/:id', authentication, async (req, res) => {
+	try {
+		const { id } = req.params;
+
+		const booking = await Booking.findById(id);
+		if (!booking) return res.status(404).json({ message: "Booking not found!" });
+
+        const isOwner = booking.userId == req.user.id;
+        const isAdmin = checkRole("remove")(req);
+        if (!(isAdmin || isOwner)) return res.status(403).json({ message: "Forbidden: You don't have the required permissions!" });
+
+		await booking.deleteOne();
+
+		res.json({ message: "Booking deleted successfully!" });
+		console.log("Booking deleted: '" + booking._id + "'");
+
+	} catch (error) {
+		console.error("delete booking error: " + error);
 		res.status(500).json({ message: "Server error" });
 	}
 });
@@ -215,8 +312,8 @@ async function startServer() {
 	// Connect Mongoose
 	await mongoose.connect(uri);
 	console.log("Connected to in-memory MongoDB");
-
-	app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 }
+
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 startServer();
