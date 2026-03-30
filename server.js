@@ -20,10 +20,25 @@ const JWT_SECRET = "super_secret_key";
 const server = http.createServer(app);
 const io = new Server(server);
 
+const debug = false; // Enabele or disable console logs (for debugging)
+
 middleware(app);
+
+function debugLog(message, forceMessage = false) {
+	if (debug || forceMessage) console.log(message);
+}
+
+// Manage connections (with Socket.IO)
+io.on('connection', (socket) => {
+	socket.on('newBooking', (data) => console.log('New booking: ' + JSON.stringify(data)));
+	socket.on('getBookings', (data) => console.log('Bookings logged: ' + JSON.stringify(data)));
+	socket.on('updateBooking', (data) => console.log('Booking updated: ' + JSON.stringify(data)));
+	socket.on('deleteBooking', (data) => console.log('Booking deleted: ' + JSON.stringify(data)));
+});
 
 // debug route
 app.get('/debug', (req, res) => {
+	if (!debug) return res.status(403).json({ message: "Debug mode is disabled!" });
 	res.json({
 		users: find().then(users => users.map(thisUser => ({ username: thisUser.username, role: thisUser.role }))),
 		rooms: _find().then(rooms => rooms.map(thisRoom => thisRoom.name))
@@ -51,7 +66,7 @@ app.post('/register', async (req, res) => {
 
 		await newUser.save();
 
-		console.log("User registered: '" + username + "' with role: '" + role + "'");
+		debugLog("User registered: '" + username + "' with role: '" + role + "'");
 		res.status(201).json({ message: "User registered successfully" });
 
 	} catch (error) {
@@ -80,7 +95,7 @@ app.post('/login', async (req, res) => {
 		if (!token) return res.status(500).json({ message: "Error generating token!" });
 
 		res.json({ message: "Login successful!", token: token });
-		console.log("User logged in: '" + username + "' with role: '" + user.role + "' and JWT token: " + token);
+		debugLog("User logged in: '" + username + "' with role: '" + user.role + "' and JWT token: " + token);
 	} catch (err) {
 		console.error("login error: " + err);
 		res.status(500).json({ message: "Server error" });
@@ -101,7 +116,7 @@ app.post('/addroom', authentication, authorizeRole(["create"]), async (req, res)
 		const newRoom = new Room({ name, capacity, type });
 		await newRoom.save();
 
-		console.log("Room created: '" + name + "' with capacity: '" + capacity + "' and type: '" + type + "'");
+		debugLog("Room created: '" + name + "' with capacity: '" + capacity + "' and type: '" + type + "'");
 		res.status(201).json({ message: "Room created successfully!", room: newRoom, id: newRoom._id });
 
 	} catch (error) {
@@ -142,7 +157,7 @@ app.put('/updateroom/:id', authentication, authorizeRole(["update"]), async (req
 		await room.save();
 
 		res.json({ message: "Room updated successfully!" });
-		console.log("Room updated: '" + oldName + "' new values - name: '" + room.name + "', capacity: '" + room.capacity + "', type: '" + room.type + "'");
+		debugLog("Room updated: '" + oldName + "' new values - name: '" + room.name + "', capacity: '" + room.capacity + "', type: '" + room.type + "'");
 	} catch (error) {
 		console.error("update room error: " + error);
 		res.status(500).json({ message: "Server error" });
@@ -160,7 +175,7 @@ app.delete('/killroom/:id', authentication, authorizeRole(["remove"]), async (re
 		await room.deleteOne();
 
 		res.json({ message: "Room deleted successfully!" });
-		console.log("Room deleted: '" + room.name + "'");
+		debugLog("Room deleted: '" + room.name + "'");
 
 	} catch (error) {
 		console.error("delete room error: " + error);
@@ -168,7 +183,7 @@ app.delete('/killroom/:id', authentication, authorizeRole(["remove"]), async (re
 	}
 });
 
-// Booking rooms route
+// Create booking rooms route
 app.post('/booking', authentication, async (req, res) => {
 	try {
 		const {roomId, startTime, endTime } = req.body;
@@ -201,9 +216,10 @@ app.post('/booking', authentication, async (req, res) => {
 		const newBooking = new Booking({ roomId: new ObjectId(roomId), userId: new ObjectId(userId), startTime: startDate, endTime: endDate });
 		await newBooking.save();
 
+		io.emit('newBooking',{ room: room.name, user: user.username, startTime: startDate, endTime: endDate });
+
 		res.json({ message: "Room booked successfully!", id: newBooking._id });
-		console.log("Room booked: '" + room.name + "' by user: '" + user.username + "' from: '"
-			+ startDate.toISOString() + "' to: '" + endDate.toISOString() + "'", "Booking ID: '" + newBooking._id + "'");
+		debugLog("Room booked: '" + room.name + "' by user: '" + user.username + "' from: '" + startDate.toISOString() + "' to: '" + endDate.toISOString() + "'", "Booking ID: '" + newBooking._id + "'");
 
 	}
 	catch (err) {
@@ -220,6 +236,7 @@ app.get('/bookings', authentication, async (req, res) => {
 
 		let bookings = await Booking.find();
 
+		// If user missing "read" perm. filter bookings.
 		if(!checkRole("read")(req)){
 			let newBooking = [];
 			bookings.forEach(booking => {
@@ -235,7 +252,10 @@ app.get('/bookings', authentication, async (req, res) => {
 			startTime: booking.startTime,
 			endTime: booking.endTime
 		})));
-		console.log("Bookings retrieved for user an user with role: '" + req.user.role + "'");
+
+		io.emit('getBookings', {user: req.user.username, role: req.user.role});
+
+		debugLog("Bookings retrieved for user an user with role: '" + req.user.role + "'");
 	} catch (error) {
 		console.error("get bookings error: " + error);
 		res.status(500).json({ message: "Server error" });
@@ -273,7 +293,8 @@ app.put('/updatebooking/:id', authentication, async (req, res) => {
 		await booking.save();
 
 		res.json({ message: "Booking updated successfully!" });
-		console.log("Booking updated: '" + booking._id + "' new values - startTime: '" + startDate + "', endTime: '" + endDate + "'");
+		io.emit('updateBooking', { bookingId: booking._id, user: req.user.username, role: req.user.role });
+		debugLog("Booking updated: '" + booking._id + "' new values - startTime: '" + startDate + "', endTime: '" + endDate + "'");
 
 	} catch (error) {
 		console.error("update booking error: " + error);
@@ -296,7 +317,8 @@ app.delete('/deletebooking/:id', authentication, async (req, res) => {
 		await booking.deleteOne();
 
 		res.json({ message: "Booking deleted successfully!" });
-		console.log("Booking deleted: '" + booking._id + "'");
+		io.emit('deleteBooking', { bookingId: booking._id, user: req.user.username, role: req.user.role });
+		debugLog("Booking deleted: '" + booking._id + "'");
 
 	} catch (error) {
 		console.error("delete booking error: " + error);

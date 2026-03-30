@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/Znarfen/BokningPlattform#readme",
   "dependencies": {
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   }
 }

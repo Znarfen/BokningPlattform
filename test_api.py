@@ -1,3 +1,4 @@
+import time
 import requests
 
 URL = "http://localhost:3000"
@@ -7,6 +8,8 @@ userToken = ""
 roomId = ""
 roomId = ""
 bookingId = ""
+
+pause = 0.2
 
 print("\n- Registration tests: \n")
 
@@ -20,6 +23,7 @@ def register_user(username, password, role):
     }
     response = requests.post(f"{URL}/register", json=user_data)
     print(f"{role.capitalize()} registration response:", response.json())
+    time.sleep(pause)
     return
 
 register_user("admin", "admin123", "admin")
@@ -58,6 +62,7 @@ def add_room(token, role, name):
     }
     r = requests.post(f"{URL}/addroom", json=room_data, headers=headers)
     print("Add room:", r.json())
+    time.sleep(pause)
     return r.json().get("id")
 
 add_room(userToken, "User", "Hell")
@@ -95,6 +100,7 @@ def update_room(token, role, id, name, capacity, room_type):
     }
     r = requests.put(f"{URL}/updateroom/{id}", json=room_data, headers=headers)
     print(f"Update room {role}:", r.json())
+    time.sleep(pause)
 
 update_room(userToken, "User", roomId, "Hell", 20, "conference")
 update_room(modToken, "Moderator (fail)", roomId, "Hell", 20, "conference")
@@ -111,6 +117,7 @@ def delete_room(token, role, room):
     }
     r = requests.delete(f"{URL}/killroom/{room}", headers=headers)
     print(f"Delete room {role}:", r.json())
+    time.sleep(pause)
 
 tempRoom = add_room(adminToken, "Admin", "Heven")
 get_rooms(adminToken, "Admin")
@@ -133,6 +140,8 @@ def book_room(token, role, roomId, startTime, endTime):
     }
     r = requests.post(f"{URL}/booking", json=booking_data, headers=headers)
     print(f"Book room {role}:", r.json())
+
+    time.sleep(pause)
     return r.json().get("id")
 
 book_room(userToken, "User", roomId, "2024-07-01T11:00:00Z", "2024-07-01T12:00:00Z")
@@ -181,7 +190,8 @@ def delete_booking(token, role, bookingId):
     r = requests.delete(f"{URL}/deletebooking/{bookingId}", headers=headers)
     print(f"Delete booking {role}:", r.json())
 
+    time.sleep(pause)
+
 delete_booking(userToken, "User", bookingId)
 delete_booking(modToken, "Moderator", bookingId)
 delete_booking(adminToken, "Admin", bookingId)
-
