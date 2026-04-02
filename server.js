@@ -219,7 +219,7 @@ app.post('/booking', authentication, async (req, res) => {
 		io.emit('newBooking',{ room: room.name, user: user.username, startTime: startDate, endTime: endDate });
 
 		res.json({ message: "Room booked successfully!", id: newBooking._id });
-		debugLog("Room booked: '" + room.name + "' by user: '" + user.username + "' from: '" + startDate.toISOString() + "' to: '" + endDate.toISOString() + "'", "Booking ID: '" + newBooking._id + "'");
+		debugLog("Room booked: '" + room.name + "' by user: '" + user.username + "' from: '" + startDate.toISOString() + "' to: '" + endDate.toISOString() + "' " + "Booking ID: '" + newBooking._id + "'");
 
 	}
 	catch (err) {
@@ -273,7 +273,7 @@ app.put('/updatebooking/:id', authentication, async (req, res) => {
 
 		// Check if the user has permission to update the booking
         const isOwner = booking.userId == req.user.id;
-        const isAdmin = checkRole("remove")(req);
+        const isAdmin = checkRole("update")(req);
         if (!(isAdmin || isOwner)) return res.status(403).json({ message: "Forbidden: You don't have the required permissions!" });
 
 		const startDate = new Date(startTime);
