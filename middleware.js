@@ -57,6 +57,7 @@ export function authorizeRole(permission) {
     }
 }
 
+// Middleware for checking if user has a specific role
 export function checkRole(role) {
     return (req) => {
         const rolePermissions = roles[req.user.role] || [];
